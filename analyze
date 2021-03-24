@@ -1,0 +1,307 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <fstream>
+#include <boost/filesystem.hpp>
+using std::cout;
+using std::endl;
+using std::string;
+using namespace boost::filesystem;
+
+struct repeat
+{
+    string name;
+    int c;
+};
+std::vector<repeat> r;
+repeat ob;
+
+int directory_read(char* str);
+int finclude(const char* str1);
+int includeexists(const char* str2, std::vector<string> &t);
+int result_out(void);
+
+std::vector<path> programfiles; //адреса .cpp файлов
+std::vector<string> pfiles; //Кастование из path в string
+std::vector<string> way_adr; //адреса путей
+std::vector<string> flist; //Список инклюдов
+std::vector<string> argv_dir; //Все адреса argv
+std::vector<path> includefiles; //Сюда адреса инклюдов из директории
+std::vector<std::vector<string>> container_containerov;
+std::vector<string> disabled; //Не найдены в каталоге
+std::vector<path> programnames; //Сюда адреса исходников
+
+void show_info() 
+{
+    cout << endl << "Для поиска введите: analyze ... - имя каталога -I ...\\... - адрес поиска 1 -I \\... - адрес поиска 2" << endl;
+}
+
+
+int main(int argc, char* argv[])
+{
+    setlocale(LC_ALL, "Russian");
+
+    if (argc > 2)
+    {
+        for (int i = 2; i < argc; i++)
+            argv_dir.push_back(argv[i]);
+
+        r.push_back(ob);
+
+        cout << "\nАнализ директории исходников\n";
+        directory_read(argv[1]);
+
+        r.pop_back();
+        for (int i = 0; i < r.size(); i++)
+            cout << r.at(i).name << "   " << r.at(i).c << endl;
+    }
+
+    else
+    {
+        cout << "Что-то пошло не так... Внимательно изучите инструкцию." << endl;
+        show_info();
+        return 0;
+    }
+
+    return 0;
+}
+
+
+int directory_read(char* str0) {
+    path p(str0);
+    try
+    {
+        if (exists(p))
+        {
+
+            if (is_directory(p))
+            {
+                for (recursive_directory_iterator iter(p), end; iter != end; ++iter) // Перебор файлов в папке
+                {
+                    if (!is_directory(iter->path()) && iter->path().extension() == ".cpp") // Поиск совпадений по расширению
+                        programfiles.push_back(iter->path());
+                }
+                for (auto&& x : programfiles)
+                    programnames.push_back(x.filename());
+
+                std::sort(programfiles.begin(), programfiles.end());
+
+                std::vector<path>::iterator ite = programfiles.begin();
+                while (ite != programfiles.end())
+                {
+                    pfiles.push_back((*ite).string());
+                    ++ite;
+                }
+                for (int i = 0; i < pfiles.size(); i++)
+                {
+                    finclude((pfiles[i]).c_str());
+                    result_out();
+                    container_containerov.clear();
+                }
+            }
+            else
+                cout << p << " Существует, но не является каталогом\n";
+        }
+        else
+            cout << p << " Не существует\n";
+    }
+
+    catch (const filesystem_error& ex)
+    {
+        cout << ex.what() << '\n';
+    }
+
+    return 0;
+}
+
+
+int finclude(const char* str1)
+{
+    way_adr.push_back(str1);
+    path pa(str1);
+
+    string line; //переменная для чтения строки
+    string str_comment = "//";
+    string bl_comment_s = "/*";
+    string bl_comment_f = "*/";
+    string include = "#include";
+    bool comment = false;
+
+    ifstream in(pa); //файл для чтения
+    flist.clear();
+
+        if (in.is_open())
+        {
+             while (getline(in, line)) //читаем по строкам
+             {
+                    if (line.find(bl_comment_s, 0) != string::npos) // Если начался блок коментариев
+                    {
+                        if (line.find(bl_comment_f, 0) != string::npos) //Если он закончился в этой же строке.
+                        {
+                            string start = line.substr(0, line.find(bl_comment_s, 0));
+                            string end = line.substr((int)line.find(bl_comment_f) + bl_comment_f.length());
+                            line = start + end; // В темп пишем всё, что между этими двумя строками
+                        }
+                        else
+                        {
+                            comment = true; // Если комментарий только начался в этой строке, а закончится после.
+                        }
+                    }
+                    if (comment && (line.find(bl_comment_f, 0) != string::npos)) // Если нашли конец незакрытого блока комметария.
+                    {
+                        line = line.substr((int)line.find(bl_comment_f) + bl_comment_f.length());
+                        comment = false;
+                    }
+
+                    if (comment)
+                    {
+                        continue; //Пока мы в блоке коммента, дальше можно не выполнять
+                    }
+
+                    if (line.find(str_comment, 0) != string::npos)
+                    {
+                        line = line.substr(0, (int)line.find(str_comment, 0));
+                        // Уничтожаем все данные, после линейного комментария.
+                    }
+
+                    if (line.find(include, 0) == string::npos)
+                    {
+                        continue; //в строке нет include
+                    }
+                    string answer;
+                    answer = line.substr(10);
+                    flist.push_back(answer.erase(answer.size() - 1)); //имена инклюдов
+             }
+        }
+    in.close();
+
+    std::vector<string> temp; 
+    for (int i = 0; i < flist.size(); i++) 
+        includeexists(flist[i].c_str(), temp);
+
+    bool flag_overlap=false;
+    if (temp.size() > 0)
+    {
+        for (int j = 0; j < temp.size(); j++)
+        {
+            for (int i = 0; i < way_adr.size(); i++)
+                if (temp[j] == way_adr[i])
+                {
+                    flag_overlap = true;
+                    break;
+                }
+            if (!flag_overlap) 
+            {
+                finclude(temp[j].c_str());
+            }
+            else flag_overlap = false;
+            if (j == temp.size() - 1)
+                way_adr.pop_back();
+        }
+    }
+    else
+    {
+        container_containerov.push_back(way_adr);
+        way_adr.pop_back();
+    }
+    return 0;
+}
+
+
+int includeexists(const char* str2, std::vector<string> &t)
+{
+    bool fl = false;
+    for (int i = 0; i < r.size(); i++)
+    {
+        if (r.at(i).name == str2)
+        {
+            r.at(i).c++;
+            fl = false;
+            break;
+        }
+        else fl = true;
+    }
+        if (fl)
+        {
+            r.at(r.size()-1).name = str2;
+            r.at(r.size()-1).c = 1;
+            r.push_back(ob);
+        }
+
+        bool flag_empty = false;
+    includefiles.clear();
+    for (int i = 0; i < argv_dir.size(); i++)
+    {
+        path p(argv_dir[i]);
+
+        try
+        {
+            if (exists(p))
+            {
+                if (is_directory(p))
+                {
+                    for (recursive_directory_iterator it(p), end; it != end; ++it) // Перебор файлов в папке
+                    {
+                        if (!is_directory(it->path()) && it->path().string() == (argv_dir[i] + str2))
+                        { // Поиск совпадений по str2
+                            includefiles.push_back(it->path());
+                            flag_empty = false;
+                            break;
+                        }
+                        else
+                            flag_empty = true;
+                    }
+                    if (!flag_empty) break;
+                }
+                else
+                    cout << p << " Существует, но не является файлом или каталогом\n";
+            }
+            else
+                cout << p << " Не существует\n";
+        }
+        catch (const filesystem_error& ex)
+        {
+            cout << ex.what() << '\n';
+        }
+    }
+    if (flag_empty)
+        disabled.push_back(str2);
+    for (int i = 0; i < includefiles.size(); i++)
+        t.push_back(includefiles[i].string());
+
+
+    return 0;
+}
+
+
+int result_out(void)
+{
+
+    for (int i = 0; i < container_containerov[0].size(); i++)
+    {
+        for (int j = 0; j < i; j++)
+            cout << "..";
+        cout << container_containerov[0][i] << endl;
+    }
+
+    for (int k = 1; k < container_containerov.size(); k++)
+    {
+        for (int i = 0; i < container_containerov[k].size(); i++)
+        {
+            if ((container_containerov[k - 1].size() > i) && (container_containerov[k - 1][i] == container_containerov[k][i]))
+                    cout << "";
+            else {
+                for (int j = 0; j < i; j++)
+                    cout << "..";
+                cout << container_containerov[k][i] << endl;
+            }
+         }
+    }
+
+    for (int z = 0; z < disabled.size(); z++)
+        cout << disabled[z] << " (!) " << endl;
+    disabled.clear();
+
+    return 0;
+
+}
